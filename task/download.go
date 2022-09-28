@@ -50,6 +50,29 @@ func checkDownloadDefault() {
 	}
 }
 
+func testFakeReturn(ip string) bool {
+    dialer := &net.Dialer{
+        Timeout:   30 * time.Second,
+        KeepAlive: 30 * time.Second,
+        DualStack: true,
+    }
+
+	http.DefaultTransport.(*http.Transport).DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+        if addr == "www.cloudflare.com:443" {
+            addr = ip + ":443"
+        }
+        return dialer.DialContext(ctx, network, addr)
+    }
+    resp, err := http.Get("https://www.cloudflare.com")
+    if err != nil {
+		return false
+	}
+	if resp.StatusCode != 200{
+		return false
+	}
+	return true
+}
+
 func TestDownloadSpeed(ipSet utils.PingDelaySet) (speedSet utils.DownloadSpeedSet) {
 	checkDownloadDefault()
 	if Disable {
@@ -70,14 +93,16 @@ func TestDownloadSpeed(ipSet utils.PingDelaySet) (speedSet utils.DownloadSpeedSe
 	fmt.Printf("开始下载测速（下载速度下限：%.2f MB/s，下载测速数量：%d，下载测速队列：%d）：\n", MinSpeed, TestCount, testNum)
 	bar := utils.NewBar(TestCount)
 	for i := 0; i < testNum; i++ {
-		speed := downloadHandler(ipSet[i].IP)
-		ipSet[i].DownloadSpeed = speed
-		// 在每个 IP 下载测速后，以 [下载速度下限] 条件过滤结果
-		if speed >= MinSpeed*1024*1024 {
-			bar.Grow(1)
-			speedSet = append(speedSet, ipSet[i]) // 高于下载速度下限时，添加到新数组中
-			if len(speedSet) == TestCount {       // 凑够满足条件的 IP 时（下载测速数量 -dn），就跳出循环
-				break
+		if testFakeReturn(ipSet[i].IP.String()){
+			speed := downloadHandler(ipSet[i].IP)
+			ipSet[i].DownloadSpeed = speed
+			// 在每个 IP 下载测速后，以 [下载速度下限] 条件过滤结果
+			if speed >= MinSpeed*1024*1024 {
+				bar.Grow(1)
+				speedSet = append(speedSet, ipSet[i]) // 高于下载速度下限时，添加到新数组中
+				if len(speedSet) == TestCount {       // 凑够满足条件的 IP 时（下载测速数量 -dn），就跳出循环
+					break
+				}
 			}
 		}
 	}
@@ -99,6 +124,7 @@ func getDialContext(ip *net.IPAddr) func(ctx context.Context, network, address s
 		return (&net.Dialer{}).DialContext(ctx, network, fakeSourceAddr)
 	}
 }
+
 
 // return download Speed
 func downloadHandler(ip *net.IPAddr) float64 {
